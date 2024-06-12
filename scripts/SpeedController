@@ -1,0 +1,36 @@
+import rospy
+from geometry_msgs.msg import Twist
+import 
+
+class SpeedCOnttroller:
+
+    MaxSpeed = 0
+    Acceleration = 0
+    Deceleratiiton = 0
+
+    def __init__(self) -> None:
+        self.control_move = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        rospy.Subscriber('/cmd_vel', Twist, self.velocity_callback)
+
+    def velocity_callback(self, data):
+        self.current_vel = data
+
+
+    def move(self, direction):
+        new_speed = Twist()
+
+        if  abs(self.current_vel) < self.MaxSpeed:
+            new_speed.linear.x = self.current_vel.linear.x + (direction * self.Acceleration)
+        elif abs(self.current_vel) > self.MaxSpeed:
+            new_speed.linear.x = direction * self.MaxSpeed
+
+        self.control_move.publish(new_speed)
+
+
+    def stop(self, direction):
+        new_speed = Twist()
+
+        if  abs(self.current_vel) > 0:
+            new_speed.linear.x = self.current_vel.linear.x - (direction * self.Deceleratiiton)
+
+        self.control_move.publish(new_speed)

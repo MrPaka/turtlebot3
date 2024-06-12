@@ -2,14 +2,21 @@
 import rospy
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
-import sys, select, termios, tty
 from pynput import keyboard
+from RobotPredictor import *
 
 class RobotController:
 
-    def __init__(self, cmd_vel) -> None:
+    def __init__(self) -> None:
+
+        self.cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=10)    
+        rospy.Subscriber('/scan', LaserScan, self.laser_callback)
+
+        keyboard.Listener(on_press=self.move_robot, 
+                        on_release=self.stop_robot).start()
+               
+        self.robot_predictor = RobotPredictor()
         self.ranges = None
-        self.cmd_vel = cmd_vel
         self.twist = Twist()
 
         self.target_speed_x = 0
@@ -17,7 +24,7 @@ class RobotController:
 
         self.speed_x = 0
         self.speed_z = 0
-
+        self.dt = 0.01
         self.obstacle_thrashold = 0.5
 
         self.is_stop = False
@@ -41,7 +48,7 @@ class RobotController:
         
         val2 = input('Enter target speed for Z: ')
         if val2 == '':
-            self.target_speed_z = 0.25
+            self.target_speed_z = 1
         else:
 
             self.target_speed_z = float(val2)
@@ -52,25 +59,30 @@ class RobotController:
         else:
             self.obstacle_thrashold = float(val3)
 
+
+    def stop_robot(self, key):
+        if (key == keyboard.Key.up or key == keyboard.Key.down):
+            self.speed_x = 0
+        elif (key == keyboard.Key.left or key == keyboard.Key.right):
+            self.speed_z = 0
+
     def move_robot(self, key):
         self.cur_command = key
-        if key == keyboard.Key.up:
-            self.speed_x = self.target_speed_x
-            self.speed_z = 0
-        elif key == keyboard.Key.down:
-            self.speed_x = -self.target_speed_x
-            self.speed_z = 0
-        elif key == keyboard.Key.left:
-            self.speed_x = 0
-            self.speed_z = self.target_speed_z
-        elif key == keyboard.Key.right:
-            self.speed_x = 0
-            self.speed_z = -self.target_speed_z
-        elif key == keyboard.Key.space:
+
+        if (key == keyboard.Key.up):
+            self.speed_x = self.speed_x + self.dt
+        elif (key == keyboard.Key.down):
+            self.speed_x = self.speed_x - self.dt
+        elif (key == keyboard.Key.left):
+            self.speed_z = self.speed_z + self.dt
+        elif (key == keyboard.Key.right):
+            self.speed_z = self.speed_z - self.dt
+        elif (key == keyboard.Key.space):
             self.speed_x = 0
             self.speed_z = 0
         elif key == 'q':
             self.is_stop = True
+
 
         self.twist.linear.x = self.speed_x
         self.twist.angular.z = self.speed_z
@@ -86,26 +98,22 @@ class RobotController:
     
     def bypassing_obstacle(self):
 
-        left_scan = self.ranges[:len(self.ranges)//3]
-        right_scan = self.ranges[2*len(self.ranges)//3:]
-        front_scan = self.ranges[len(self.ranges)//3:2*len(self.ranges)//3]
+        len_range = len(self.ranges)
+        front_scan = self.ranges[-(len_range // 18):] + self.ranges[:(len_range // 18)]
 
-        if min(front_scan) < 0.5:
-            if min(left_scan) > min(right_scan):
-                self.move_robot(keyboard.Key.left)  # Поворот влево
-            else:
-                self.move_robot(keyboard.Key.right) # Поворот вправо
+        if (min(front_scan) < self.obstacle_thrashold and self.cur_command == keyboard.Key.up):
+            self.move_robot(keyboard.Key.space)
+            self.robot_predictor.Color = [1.0, 0.0, 0.0]
+            rospy.logwarn('Движение в перед не возможно')
         else:
-            self.move_robot(keyboard.Key.down)  # Вперед
+            self.robot_predictor.Color = [0.0, 1.0, 0.0]
+
 
     def Loop(self):
 
-        rate = rospy.Rate(100)
+        rate = rospy.Rate(10)
 
         while not self.is_stop:
-            
-            self.move_robot(self.cur_command)
-
             if self.obstacle_detection():
                 self.bypassing_obstacle()
 
@@ -115,12 +123,8 @@ class RobotController:
 if __name__ == '__main__':
     rospy.init_node('node')
     try:
-        cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        robot = RobotController(cmd_vel)
-    
-        rospy.Subscriber('/scan', LaserScan, robot.laser_callback)
 
-        keyboard.Listener(on_press=robot.move_robot).start()
+        robot = RobotController()
         robot.Loop()
 
         rospy.loginfo('Start node')
