@@ -1,43 +1,46 @@
+#!/usr/bin/env python
 import rospy
 from geometry_msgs.msg import Twist
-from sensor_msgs.msg import Image, CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA, Float32, Float32MultiArray
 import tf
 import math
+# from dynamic_reconfigure.server import Server
+# from robot_controller.cfg import params
 
 class RobotPredictor:
-    Color = [0.0, 0.0, 0.0]
     
     def __init__(self) -> None:
-       
-        self.time_predict = 5
-        color = [0.0, 0.0, 0.0]
+        rospy.init_node('robot_predictor')
+        # Server(params, self.get_param)
+        rospy.Subscriber('/cmd_vel', Twist, self.velocity_callback)
+        rospy.Subscriber('/color_predict', ColorRGBA, self.color_predict_callback)
+        self.obstacle_thrashold = rospy.Publisher('/obstacle_thrashold', Float32, queue_size=10)
+        self.sector = rospy.Publisher('/coordinates_sector', Float32MultiArray, queue_size=10)
         self.cur_pos = [0, 0, 0]
         self.cur_vel = None
-        rospy.Subscriber('/cmd_vel', Twist, self.velocity_callback)
-        # rospy.Subscriber('/camera/image_raw', Image, self.image_callback)
-        # rospy.Subscriber('/camera/camera_info', CameraInfo, self.camera_info_callback)
+        self.time_predict = 5
+        self.color_predict = ColorRGBA(0, 255, 0, 1)
         self.marker_arr = rospy.Publisher('/marker_array', MarkerArray, queue_size=10)
         self.tf_listener = tf.TransformListener()
 
-    def image_callback(self, data):
-        pass
-
-    def camera_info_callback(self, data):
-        pass
-    
+    # def get_param(self, config: params, level):
+    #     self.time_predict = config["time_predict"]
+    #     return config
 
     def velocity_callback(self, vel):
         self.cur_vel = vel
-        self.predict()
-
+        
+    def color_predict_callback(self, color):
+        self.color_predict = color
             
     def predict(self):
         marker_array = MarkerArray()
-
         dt = 0.1
         num_steps= int(self.time_predict / dt)
         x, y, theta = self.cur_pos
+        obs = self.cur_vel.linear.x * self.time_predict
+        self.obstacle_thrashold.publish(Float32(obs))
 
         for i in range(num_steps):
             x += self.cur_vel.linear.x * dt * math.cos(theta)
@@ -64,16 +67,36 @@ class RobotPredictor:
             marker.scale.y = 0.1
             marker.scale.z = 0.1
             marker.color.a = 1.0
-            # marker.color.r = RobotPredictor.Color[0]
-            # marker.color.g = RobotPredictor.Color[1]
-            # marker.color.b = RobotPredictor.Color[2]
-
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
+            marker.color.r = self.color_predict.r
+            marker.color.g = self.color_predict.g
+            marker.color.b = self.color_predict.b
 
             marker_array.markers.append(marker)
-
+        msg = Float32MultiArray()
+        msg.data = [x, y]
+        self.sector.publish(msg)
         self.marker_arr.publish(marker_array)
+    
+    def Loop(self):
+
+        rate = rospy.Rate(10)
+
+        while not rospy.is_shutdown():
+            self.predict()            
+            rate.sleep()
 
 
+if __name__ == "__main__":
+    rospy.init_node("robot_predictor")
+    try:
+
+        robot = RobotPredictor()
+        rospy.sleep(1)
+        robot.Loop()
+
+        rospy.loginfo("Start node robot_predictor")
+    except Exception as ms:
+        rospy.logerr(ms)
+    finally:
+        rospy.loginfo("Stop node robot_predictor")
+        rospy.spin()

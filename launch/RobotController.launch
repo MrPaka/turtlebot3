@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+
+    <!-- <arg name="obstacle_thrashold"  default="0.5"/>
+    <arg name="max_speed"  default="1"/>
+    <arg name="acceleration" default="1"/>
+    <arg name="deceleration" default="1"/>
+    <arg name="time_predict" default="5"/> -->
+
+    <!-- Управляющая нода-->
+    <node pkg="robot_controller" type="FinalyNode.py"
+        name="controller" output="screen">
+        <!-- <param name="obstacle_thrashold" default="$(arg obstacle_thrashold)"/> -->
+    </node>
+
+    <!-- Упревление скоростью робота-->
+    <node pkg="robot_controller" type="SpeedController.py"
+    name="speed_controller" output="screen">
+        <!-- <param name="max_speed" default="$(arg max_speed)"/>
+        <param name="acceleration" default="$(arg acceleration)"/>
+        <param name="deceleration" default="$(arg deceleration)"/> -->
+    </node>
+
+    <!-- Предсказание траектории-->
+    <node pkg="robot_controller" type="RobotPredictor.py"
+    name="robot_predictor" output="screen">
+        <!-- <param name="time_predict" default="$(arg time_predict)"/> -->
+    </node>
+</launch>

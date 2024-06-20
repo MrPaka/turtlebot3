@@ -1,136 +1,136 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import rospy
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from pynput import keyboard
-from RobotPredictor import *
+from std_msgs.msg import String, Int16, ColorRGBA, Float32, Float32MultiArray
+import math
+
+# from dynamic_reconfigure.server import Server
+# from robot_controller.cfg import params
 
 class RobotController:
 
     def __init__(self) -> None:
-
-        self.cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=10)    
-        rospy.Subscriber('/scan', LaserScan, self.laser_callback)
-
+        # Server(params, self.get_param)
+        self.color_predict = rospy.Publisher("/color_predict", ColorRGBA, queue_size=10)
+        self.command_control = rospy.Publisher("/command_control", String, queue_size=10)
+        self.direction = rospy.Publisher("/direction", Int16, queue_size=10)
+        rospy.Subscriber("/scan", LaserScan, self.laser_callback)
+        rospy.Subscriber('/obstacle_thrashold', Float32, self.obs_callback)
+        rospy.Subscriber('/coordinates_sector', Float32MultiArray, self.coordinates_sector_callback)
+        self.cur_pos = [0, 0, 0]
         keyboard.Listener(on_press=self.move_robot, 
                         on_release=self.stop_robot).start()
-               
-        self.robot_predictor = RobotPredictor()
+
         self.ranges = None
-        self.twist = Twist()
-
-        self.target_speed_x = 0
-        self.target_speed_z = 0
-
-        self.speed_x = 0
-        self.speed_z = 0
-        self.dt = 0.01
         self.obstacle_thrashold = 0.5
-
-        self.is_stop = False
-
+        self.command = ("stop", 0)
         self.cur_command = keyboard.Key.space
+        self.isObstacle = False
+        self.sector = 0
 
-        self.set_value()
+    # def get_param(self, config: params, level):
+    #     self.obstacle_thrashold = config["obstacle_thrashold"]
+    #     return config        
 
     def laser_callback(self, data):
         if (data != None):
             self.ranges = data.ranges
         else:
-            rospy.loginfo('Error get data scan')
+            rospy.loginfo("Error get data scan")
 
-    def set_value(self):
-        val1 = input('Enter target speed for X: ')
-        if val1 == '':
-            self.target_speed_x = 0.25
-        else:
-            self.target_speed_x = float(val1)
-        
-        val2 = input('Enter target speed for Z: ')
-        if val2 == '':
-            self.target_speed_z = 1
-        else:
+    def obs_callback(self, obs):
+        self.obstacle_thrashold = abs(obs.data)
 
-            self.target_speed_z = float(val2)
-        
-        val3 = input('Enter the threshold to the obstancle: ')
-        if val3 == '':
-            self.obstacle_thrashold = 0.5
-        else:
-            self.obstacle_thrashold = float(val3)
-
+    def coordinates_sector_callback(self, data: Float32MultiArray):
+        x = data.data[0]
+        y = data.data[1]
+        self.sector = int(math.degrees(math.atan2(y, x)))
+        if self.sector < 0:
+            self.sector += 360
 
     def stop_robot(self, key):
-        if (key == keyboard.Key.up or key == keyboard.Key.down):
-            self.speed_x = 0
-        elif (key == keyboard.Key.left or key == keyboard.Key.right):
-            self.speed_z = 0
+
+        if (key == keyboard.Key.up):
+            self.command = ("braiking_straight", 1)
+        elif (key == keyboard.Key.down):
+            self.command = ("braiking_straight", -1)
+        elif (key == keyboard.Key.left):
+            self.command = ("braiking_rotation", 1)
+        elif (key == keyboard.Key.right):
+            self.command = ("braiking_rotation", -1)
+
 
     def move_robot(self, key):
         self.cur_command = key
-
         if (key == keyboard.Key.up):
-            self.speed_x = self.speed_x + self.dt
+            self.command = ("straight", 1)
         elif (key == keyboard.Key.down):
-            self.speed_x = self.speed_x - self.dt
+            self.command = ("straight", -1)
         elif (key == keyboard.Key.left):
-            self.speed_z = self.speed_z + self.dt
+            self.command = ("rotation", 1)
         elif (key == keyboard.Key.right):
-            self.speed_z = self.speed_z - self.dt
+            self.command = ("rotation", -1)
         elif (key == keyboard.Key.space):
-            self.speed_x = 0
-            self.speed_z = 0
-        elif key == 'q':
-            self.is_stop = True
-
-
-        self.twist.linear.x = self.speed_x
-        self.twist.angular.z = self.speed_z
-
-        self.cmd_vel.publish(self.twist)
+            self.command = ("stop", 0)
 
 
     def obstacle_detection(self):
         if (self.ranges != None):
             min_range = min(self.ranges)
             return min_range < self.obstacle_thrashold
+        self.color_predict.publish(ColorRGBA(0, 255 ,0, 1))
         return False
     
     def bypassing_obstacle(self):
 
-        len_range = len(self.ranges)
-        front_scan = self.ranges[-(len_range // 18):] + self.ranges[:(len_range // 18)]
-
-        if (min(front_scan) < self.obstacle_thrashold and self.cur_command == keyboard.Key.up):
-            self.move_robot(keyboard.Key.space)
-            self.robot_predictor.Color = [1.0, 0.0, 0.0]
-            rospy.logwarn('Движение в перед не возможно')
+        # len_range = len(self.ranges)
+        # front_scan = self.ranges[-(len_range // 36):] + self.ranges[:(len_range // 36)]
+        front_scan = []
+        if (self.sector - 10) < 0:
+            front_scan = self.ranges[(self.sector - 10):] + self.ranges[:(self.sector + 10)]
+        elif (self.sector + 10) > 360:
+            front_scan = self.ranges[-(360 - self.sector - 10):] + self.ranges[:(360 - self.sector + 10)]
         else:
-            self.robot_predictor.Color = [0.0, 1.0, 0.0]
+            front_scan = self.ranges[(self.sector - 10):(self.sector + 10)]
+
+        if (min(front_scan) < self.obstacle_thrashold):
+            self.isObstacle = True
+            self.move_robot(keyboard.Key.space)
+            self.color_predict.publish(ColorRGBA(255, 0 ,0, 1))
+            rospy.logwarn("Движение в перед не возможно")
+        else:
+            self.color_predict.publish(ColorRGBA(0, 255 ,0, 1))
+            self.isObstacle = False
 
 
     def Loop(self):
 
         rate = rospy.Rate(10)
 
-        while not self.is_stop:
+        while not rospy.is_shutdown():
             if self.obstacle_detection():
                 self.bypassing_obstacle()
 
+                
+            self.command_control.publish(String(self.command[0]))
+            self.direction.publish(Int16(self.command[1]))
+            
             rate.sleep()
 
 
-if __name__ == '__main__':
-    rospy.init_node('node')
+if __name__ == "__main__":
+    rospy.init_node("robot_controller")
     try:
 
         robot = RobotController()
         robot.Loop()
 
-        rospy.loginfo('Start node')
+        rospy.loginfo("Start node")
     except Exception as ms:
         rospy.logerr(ms)
     finally:
-        rospy.loginfo('Stop node')
+        rospy.loginfo("Stop node")
         rospy.spin()
     
